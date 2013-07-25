@@ -24,8 +24,8 @@ import org.vertx.java.core.logging.impl.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
@@ -33,20 +33,20 @@ import java.util.concurrent.ConcurrentHashMap;
 public class HandlerManager<T> {
 
   @SuppressWarnings("unused")
-	private static final Logger log = LoggerFactory.getLogger(HandlerManager.class);
+  private static final Logger log = LoggerFactory.getLogger(HandlerManager.class);
 
   private final VertxEventLoopGroup availableWorkers;
-  private final Map<EventLoop, Handlers<T>> handlerMap = new ConcurrentHashMap<>();
+  private final ConcurrentMap<EventLoop, Handlers<T>> handlerMap = new ConcurrentHashMap<>();
 
   public HandlerManager(VertxEventLoopGroup availableWorkers) {
     this.availableWorkers = availableWorkers;
   }
 
-  public synchronized boolean hasHandlers() {
+  public boolean hasHandlers() {
     return !handlerMap.isEmpty();
   }
 
-  public synchronized HandlerHolder<T> chooseHandler(EventLoop worker) {
+  public HandlerHolder<T> chooseHandler(EventLoop worker) {
     Handlers<T> handlers = handlerMap.get(worker);
     if (handlers == null) {
       return null;
@@ -54,26 +54,28 @@ public class HandlerManager<T> {
     return handlers.chooseHandler();
   }
 
-  public synchronized void addHandler(Handler<T> handler, DefaultContext context) {
+  public void addHandler(Handler<T> handler, DefaultContext context) {
     EventLoop worker = context.getEventLoop();
     availableWorkers.addWorker(worker);
+
     Handlers<T> handlers = handlerMap.get(worker);
     if (handlers == null) {
       handlers = new Handlers<>();
-      handlerMap.put(worker, handlers);
+      Handlers<T> h = handlerMap.putIfAbsent(worker, handlers);
+      if (h != null) {
+        handlers = h;
+      }
     }
     handlers.addHandler(new HandlerHolder<>(context, handler));
   }
 
-  public synchronized void removeHandler(Handler<T> handler, DefaultContext context) {
+  public  void removeHandler(Handler<T> handler, DefaultContext context) {
     EventLoop worker = context.getEventLoop();
     Handlers<T> handlers = handlerMap.get(worker);
     if (!handlers.removeHandler(new HandlerHolder<>(context, handler))) {
       throw new IllegalStateException("Can't find handler");
     }
-    if (handlers.isEmpty()) {
-      handlerMap.remove(worker);
-    }
+
     //Available workers does it's own reference counting -since workers can be shared across different Handlers
     availableWorkers.removeWorker(worker);
   }
@@ -81,28 +83,25 @@ public class HandlerManager<T> {
   private static class Handlers<T> {
     int pos;
     final List<HandlerHolder<T>> list = new ArrayList<>();
-    HandlerHolder<T> chooseHandler() {
+
+    synchronized HandlerHolder<T> chooseHandler() {
       HandlerHolder<T> handler = list.get(pos);
       pos++;
       checkPos();
       return handler;
     }
 
-    void addHandler(HandlerHolder<T> handler) {
+    synchronized void addHandler(HandlerHolder<T> handler) {
       list.add(handler);
     }
 
-    boolean removeHandler(HandlerHolder<T> handler) {
+    synchronized boolean removeHandler(HandlerHolder<T> handler) {
       if (list.remove(handler)) {
         checkPos();
         return true;
       } else {
         return false;
       }
-    }
-
-    boolean isEmpty() {
-      return list.isEmpty();
     }
 
     void checkPos() {
