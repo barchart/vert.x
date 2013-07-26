@@ -85,6 +85,9 @@ public class HandlerManager<T> {
     final List<HandlerHolder<T>> list = new ArrayList<>();
 
     synchronized HandlerHolder<T> chooseHandler() {
+      if(list.isEmpty()) {
+        return null;
+      }
       HandlerHolder<T> handler = list.get(pos);
       pos++;
       checkPos();
